@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Full Webpage Screenshot</title>
+    <link rel="icon" type="image/png" sizes="16x16" href="icons/icon16.png">
+    <link rel="icon" type="image/png" sizes="48x48" href="icons/icon48.png">
+    <link rel="icon" type="image/png" sizes="128x128" href="icons/icon128.png">
     <style>
         body {
             width: 320px;
@@ -23,10 +26,22 @@
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
 
+        .logo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        
+        .logo img {
+            width: 32px;
+            height: 32px;
+            margin-right: 10px;
+        }
+        
         h1 {
-            margin: 0 0 20px 0;
+            margin: 0;
             font-size: 18px;
-            text-align: center;
             font-weight: 600;
         }
 
@@ -146,7 +161,10 @@
 </head>
 <body>
     <div class="container">
-        <h1>📸 Full Webpage Screenshot</h1>
+        <div class="logo">
+            <img src="icons/icon48.png" alt="Screenshot Extension Logo">
+            <h1>Full Webpage Screenshot</h1>
+        </div>
         
         <div class="options">
             <div class="option-group">
@@ -163,7 +181,7 @@
                 <select id="format">
                     <option value="png" selected>PNG</option>
                     <option value="jpg">JPG</option>
-                    <option value="pdf" disabled>PDF (Coming Soon)</option>
+                    <option value="pdf">PDF</option>
                 </select>
             </div>
 
@@ -183,6 +201,24 @@
                     <option value="slow" selected>Slow (More Reliable)</option>
                     <option value="medium">Medium (Balanced)</option>
                     <option value="fast">Fast (May Hit Limits)</option>
+                </select>
+            </div>
+
+            <div class="option-group" id="pdfOptions" style="display: none;">
+                <label for="pdfPageSize">PDF Page Size:</label>
+                <select id="pdfPageSize">
+                    <option value="a4" selected>A4</option>
+                    <option value="letter">Letter</option>
+                    <option value="legal">Legal</option>
+                    <option value="a3">A3</option>
+                </select>
+            </div>
+
+            <div class="option-group" id="pdfOrientation" style="display: none;">
+                <label for="pdfOrientation">PDF Orientation:</label>
+                <select id="pdfOrientation">
+                    <option value="portrait" selected>Portrait</option>
+                    <option value="landscape">Landscape</option>
                 </select>
             </div>
         </div>

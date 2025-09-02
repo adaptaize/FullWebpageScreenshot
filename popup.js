@@ -39,13 +39,22 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function getOptions() {
-        return {
+        const format = document.getElementById('format').value;
+        const options = {
             quality: parseFloat(document.getElementById('quality').value),
-            format: document.getElementById('format').value,
+            format: format,
             hideScrollbar: document.getElementById('hideScrollbar').checked,
             waitForImages: document.getElementById('waitForImages').checked,
             captureSpeed: document.getElementById('captureSpeed').value
         };
+
+        // Add PDF-specific options if PDF is selected
+        if (format === 'pdf') {
+            options.pdfPageSize = document.getElementById('pdfPageSize').value;
+            options.pdfOrientation = document.getElementById('pdfOrientation').value;
+        }
+
+        return options;
     }
 
     async function captureScreenshot(fullPage = true) {
@@ -98,9 +107,27 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Function to toggle PDF options visibility
+    function togglePdfOptions() {
+        const format = document.getElementById('format').value;
+        const pdfOptions = document.getElementById('pdfOptions');
+        const pdfOrientation = document.getElementById('pdfOrientation');
+        
+        if (format === 'pdf') {
+            pdfOptions.style.display = 'block';
+            pdfOrientation.style.display = 'block';
+        } else {
+            pdfOptions.style.display = 'none';
+            pdfOrientation.style.display = 'none';
+        }
+    }
+
     // Event listeners
     captureBtn.addEventListener('click', () => captureScreenshot(true));
     captureVisibleBtn.addEventListener('click', () => captureScreenshot(false));
+    
+    // Add event listener for format change
+    document.getElementById('format').addEventListener('change', togglePdfOptions);
 
     // Listen for progress updates from background script
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

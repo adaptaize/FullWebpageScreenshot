@@ -1,37 +1,83 @@
 <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
     <defs>
-        <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+        <!-- Main gradient -->
+        <linearGradient id="mainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
             <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
         </linearGradient>
+
+        <!-- Camera gradient -->
+        <linearGradient id="cameraGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#f8f9fa;stop-opacity:1" />
+        </linearGradient>
+
+        <!-- PDF gradient -->
+        <linearGradient id="pdfGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#4CAF50;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#45a049;stop-opacity:1" />
+        </linearGradient>
+
+        <!-- Shadow filter -->
+        <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+            <feDropShadow dx="2" dy="2" stdDeviation="3" flood-color="#000000" flood-opacity="0.3" />
+        </filter>
     </defs>
 
-    <!-- Background circle -->
-    <circle cx="64" cy="64" r="60" fill="url(#grad1)" stroke="#fff" stroke-width="4" />
+    <!-- Background circle with shadow -->
+    <circle cx="64" cy="64" r="58" fill="url(#mainGrad)" stroke="#fff" stroke-width="6" filter="url(#shadow)" />
 
-    <!-- Camera body -->
-    <rect x="32" y="40" width="64" height="48" rx="8" fill="#fff" opacity="0.9" />
+    <!-- Main camera body -->
+    <rect x="28" y="36" width="72" height="56" rx="12" fill="url(#cameraGrad)" opacity="0.95" filter="url(#shadow)" />
 
-    <!-- Camera lens -->
-    <circle cx="64" cy="64" r="16" fill="#333" />
-    <circle cx="64" cy="64" r="12" fill="#fff" />
-    <circle cx="64" cy="64" r="8" fill="#333" />
+    <!-- Camera lens outer ring -->
+    <circle cx="64" cy="64" r="20" fill="#2c3e50" />
+    <circle cx="64" cy="64" r="18" fill="#34495e" />
 
-    <!-- Document/PDF -->
-    <rect x="70" y="50" width="20" height="28" rx="2" fill="#4CAF50" opacity="0.8" />
-    <rect x="72" y="52" width="16" height="2" fill="#fff" />
-    <rect x="72" y="56" width="12" height="2" fill="#fff" />
-    <rect x="72" y="60" width="14" height="2" fill="#fff" />
-    <rect x="72" y="64" width="10" height="2" fill="#fff" />
-    <rect x="72" y="68" width="16" height="2" fill="#fff" />
+    <!-- Camera lens inner -->
+    <circle cx="64" cy="64" r="14" fill="#ecf0f1" />
+    <circle cx="64" cy="64" r="10" fill="#bdc3c7" />
+    <circle cx="64" cy="64" r="6" fill="#2c3e50" />
 
-    <!-- Screenshot lines -->
-    <line x1="20" y1="20" x2="40" y2="20" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="20" y1="20" x2="20" y2="40" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="108" y1="20" x2="88" y2="20" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="108" y1="20" x2="108" y2="40" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="20" y1="108" x2="40" y2="108" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="20" y1="108" x2="20" y2="88" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="108" y1="108" x2="88" y2="108" stroke="#fff" stroke-width="3" stroke-linecap="round" />
-    <line x1="108" y1="108" x2="108" y2="88" stroke="#fff" stroke-width="3" stroke-linecap="round" />
+    <!-- Lens highlight -->
+    <circle cx="58" cy="58" r="3" fill="#ffffff" opacity="0.8" />
+
+    <!-- PDF document -->
+    <rect x="76" y="44" width="24" height="32" rx="3" fill="url(#pdfGrad)" opacity="0.9" filter="url(#shadow)" />
+
+    <!-- PDF content lines -->
+    <rect x="80" y="48" width="16" height="2" fill="#ffffff" rx="1" />
+    <rect x="80" y="52" width="12" height="2" fill="#ffffff" rx="1" />
+    <rect x="80" y="56" width="14" height="2" fill="#ffffff" rx="1" />
+    <rect x="80" y="60" width="10" height="2" fill="#ffffff" rx="1" />
+    <rect x="80" y="64" width="16" height="2" fill="#ffffff" rx="1" />
+    <rect x="80" y="68" width="8" height="2" fill="#ffffff" rx="1" />
+
+    <!-- PDF corner fold -->
+    <path d="M 88 44 L 100 44 L 100 56 L 88 44 Z" fill="#2e7d32" opacity="0.8" />
+
+    <!-- Screenshot frame corners -->
+    <g stroke="#ffffff" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.9">
+        <!-- Top-left corner -->
+        <line x1="16" y1="16" x2="32" y2="16" />
+        <line x1="16" y1="16" x2="16" y2="32" />
+
+        <!-- Top-right corner -->
+        <line x1="112" y1="16" x2="96" y2="16" />
+        <line x1="112" y1="16" x2="112" y2="32" />
+
+        <!-- Bottom-left corner -->
+        <line x1="16" y1="112" x2="32" y2="112" />
+        <line x1="16" y1="112" x2="16" y2="96" />
+
+        <!-- Bottom-right corner -->
+        <line x1="112" y1="112" x2="96" y2="112" />
+        <line x1="112" y1="112" x2="112" y2="96" />
+    </g>
+
+    <!-- Camera flash -->
+    <rect x="40" y="28" width="8" height="6" rx="2" fill="#f39c12" opacity="0.8" />
+
+    <!-- Camera viewfinder -->
+    <rect x="52" y="30" width="24" height="4" rx="2" fill="#34495e" opacity="0.6" />
 </svg>

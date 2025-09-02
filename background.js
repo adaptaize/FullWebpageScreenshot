@@ -206,7 +206,7 @@ class ScreenshotCapture {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         
         console.log('Executing processImagesForPDF in content script...');
-        const result = await chrome.scripting.executeScript({
+        const processResult = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             function: async (images, options) => {
                 try {
@@ -319,14 +319,14 @@ class ScreenshotCapture {
             args: [images, options]
         });
 
-        console.log('Result from content script:', result);
+        console.log('Result from content script:', processResult);
 
-        if (!result[0] || !result[0].result) {
+        if (!processResult[0] || !processResult[0].result) {
             console.error('Content script execution failed - no result returned');
             throw new Error('Failed to process images for PDF - no result returned');
         }
 
-        const resultData = result[0].result;
+        const resultData = processResult[0].result;
         
         // Check if the result contains an error
         if (resultData.error) {
@@ -340,26 +340,19 @@ class ScreenshotCapture {
 
         const { combinedImageDataUrl, dimensions } = resultData;
 
-        // For now, save as PNG instead of PDF to avoid import issues
-        const filename = `screenshot_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
-        
-        await chrome.downloads.download({
-            url: combinedImageDataUrl,
-            filename: filename,
-            saveAs: true
-        });
+        // Generate PDF from the combined image
+        const pdfResult = await this.generateAndDownloadPDF(combinedImageDataUrl, dimensions, options);
 
         this.updateProgress(100);
-        this.updateStatus('Screenshot saved successfully!', 'success');
 
-        return { success: true, filename: filename };
+        return pdfResult;
     }
 
     async createSingleImagePDF(image, options) {
         // Execute image processing in content script context
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         
-        const result = await chrome.scripting.executeScript({
+        const singleImageResult = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             function: (image, options) => {
                 try {
@@ -378,26 +371,106 @@ class ScreenshotCapture {
             args: [image, options]
         });
 
-        if (!result[0] || !result[0].result) {
+        if (!singleImageResult[0] || !singleImageResult[0].result) {
             throw new Error('Failed to process single image for PDF');
         }
 
-        const { imageDataUrl, dimensions } = result[0].result;
+        const { imageDataUrl, dimensions } = singleImageResult[0].result;
 
-        // For now, save as PNG instead of PDF to avoid import issues
-        const filename = `screenshot_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
-        
-        await chrome.downloads.download({
-            url: imageDataUrl,
-            filename: filename,
-            saveAs: true
-        });
+        // Generate PDF from the single image
+        const singlePdfResult = await this.generateAndDownloadPDF(imageDataUrl, dimensions, options);
 
         this.updateProgress(100);
-        this.updateStatus('Screenshot saved successfully!', 'success');
 
-        return { success: true, filename: filename };
+        return singlePdfResult;
     }
+
+    // Generate and download PDF from image data URL
+    async generateAndDownloadPDF(imageDataUrl, dimensions, options) {
+        try {
+            // Use content script to create the PDF tab since URL.createObjectURL is not available in service workers
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            
+            const result = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                function: (imageDataUrl, options) => {
+                    // Create HTML content for PDF
+                    const pageSize = options.pdfPageSize || 'a4';
+                    const orientation = options.pdfOrientation || 'portrait';
+                    
+                    const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Screenshot PDF</title>
+    <style>
+        @page {
+            size: ${pageSize} ${orientation};
+            margin: 0.5in;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: white;
+        }
+        img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .instruction {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background: #4CAF50;
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="instruction">Press Ctrl+P (Cmd+P on Mac) to save as PDF</div>
+    <img src="${imageDataUrl}" alt="Screenshot" />
+</body>
+</html>`;
+                    
+                    // Create blob and URL in content script context
+                    const blob = new Blob([htmlContent], { type: 'text/html' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    // Open new tab with the blob URL
+                    window.open(blobUrl, '_blank');
+                    
+                    // Clean up after a delay
+                    setTimeout(() => {
+                        URL.revokeObjectURL(blobUrl);
+                    }, 2000);
+                    
+                    return { success: true };
+                },
+                args: [imageDataUrl, options]
+            });
+            
+            this.updateStatus('PDF tab opened. Use Ctrl+P (Cmd+P on Mac) to save as PDF.', 'info');
+            
+            return { success: true, filename: 'PDF' };
+            
+        } catch (error) {
+            console.error('Error generating PDF:', error);
+            throw new Error(`Failed to open PDF tab: ${error.message}`);
+        }
+    }
+    
+
+    
+
 
     async combineImages(images, options) {
         // Execute image processing in content script context

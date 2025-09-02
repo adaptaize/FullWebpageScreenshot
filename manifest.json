@@ -2,12 +2,13 @@
   "manifest_version": 3,
   "name": "Full Webpage Screenshot",
   "version": "1.0.0",
-  "description": "Capture full webpage screenshots including very long pages and save as PDF",
+  "description": "Capture full webpage screenshots including very long pages and save as PNG, JPG, or PDF",
   "permissions": [
     "activeTab",
     "scripting",
     "downloads",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"
