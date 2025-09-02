@@ -120,6 +120,11 @@ class ScreenshotCapture {
                     // Capture screenshot with retry logic
                     const screenshot = await this.captureScreenshotWithRetry(options);
 
+                    // Validate screenshot data
+                    if (!screenshot || !screenshot.startsWith('data:image/')) {
+                        throw new Error(`Invalid screenshot data received for segment (${x}, ${y})`);
+                    }
+
                     images.push({
                         dataUrl: screenshot,
                         x: x,
@@ -142,12 +147,30 @@ class ScreenshotCapture {
 
                 } catch (error) {
                     console.error('Screenshot capture error:', error);
-                    this.updateStatus(`Error capturing segment: ${error.message}`, 'error');
+                    this.updateStatus(`Error capturing segment (${x}, ${y}): ${error.message}`, 'error');
                     throw error;
                 }
             }
         }
 
+        // Validate that we have captured images
+        if (images.length === 0) {
+            throw new Error('No images were captured during the screenshot process');
+        }
+
+        // Validate all images have required properties
+        for (let i = 0; i < images.length; i++) {
+            const img = images[i];
+            if (!img.dataUrl || !img.dataUrl.startsWith('data:image/')) {
+                throw new Error(`Invalid image data at index ${i}`);
+            }
+            if (typeof img.x !== 'number' || typeof img.y !== 'number' || 
+                typeof img.width !== 'number' || typeof img.height !== 'number') {
+                throw new Error(`Invalid image dimensions at index ${i}`);
+            }
+        }
+
+        console.log(`Successfully captured ${images.length} image segments`);
         return images;
     }
 
@@ -185,19 +208,29 @@ class ScreenshotCapture {
         console.log('Executing processImagesForPDF in content script...');
         const result = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            function: (images, options) => {
+            function: async (images, options) => {
                 try {
                     console.log('processImagesForPDF called with:', { imagesCount: images.length, options });
                     
                     // Validate inputs
                     if (!images || images.length === 0) {
-                        console.error('No images provided to processImagesForPDF');
-                        return null;
+                        throw new Error('No images provided to processImagesForPDF');
+                    }
+
+                    // Check for valid image data
+                    for (let i = 0; i < images.length; i++) {
+                        if (!images[i].dataUrl || !images[i].dataUrl.startsWith('data:image/')) {
+                            throw new Error(`Invalid image data at index ${i}`);
+                        }
                     }
 
                     // Create canvas to combine images
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
+
+                    if (!ctx) {
+                        throw new Error('Failed to get canvas 2D context');
+                    }
 
                     // Calculate total dimensions
                     const maxX = Math.max(...images.map(img => img.x));
@@ -207,25 +240,67 @@ class ScreenshotCapture {
 
                     console.log('Canvas dimensions:', { totalWidth, totalHeight, maxX, maxY });
 
-                    canvas.width = totalWidth;
-                    canvas.height = totalHeight;
-
-                    // Draw images on canvas synchronously since they're already data URLs
-                    for (let i = 0; i < images.length; i++) {
-                        const image = images[i];
-                        console.log(`Processing image ${i + 1}/${images.length}:`, { x: image.x, y: image.y, width: image.width, height: image.height });
+                    // Check canvas size limits (most browsers support up to 32,767 pixels)
+                    const MAX_CANVAS_SIZE = 32767;
+                    let scale = 1;
+                    
+                    if (totalWidth > MAX_CANVAS_SIZE || totalHeight > MAX_CANVAS_SIZE) {
+                        console.warn(`Canvas size too large: ${totalWidth}x${totalHeight}. Attempting to scale down...`);
                         
-                        const img = new Image();
-                        img.src = image.dataUrl;
-                        // Since these are data URLs from chrome.tabs.captureVisibleTab, they should load immediately
-                        ctx.drawImage(
-                            img,
-                            image.x * image.width,
-                            image.y * image.height,
-                            image.width,
-                            image.height
-                        );
+                        // Calculate scale factor to fit within limits
+                        const scaleX = MAX_CANVAS_SIZE / totalWidth;
+                        const scaleY = MAX_CANVAS_SIZE / totalHeight;
+                        scale = Math.min(scaleX, scaleY, 1); // Don't scale up
+                        
+                        if (scale < 0.1) {
+                            throw new Error(`Page too large to process. Canvas size: ${totalWidth}x${totalHeight}. Maximum supported: ${MAX_CANVAS_SIZE}x${MAX_CANVAS_SIZE}. Consider using a smaller viewport or capturing in sections.`);
+                        }
+                        
+                        console.log(`Scaling down by factor ${scale.toFixed(3)}`);
                     }
+
+                    canvas.width = Math.floor(totalWidth * scale);
+                    canvas.height = Math.floor(totalHeight * scale);
+
+                    // Load and draw images asynchronously
+                    const imagePromises = images.map((imageData, index) => {
+                        return new Promise((resolve, reject) => {
+                            const img = new Image();
+                            
+                            img.onload = () => {
+                                try {
+                                    console.log(`Drawing image ${index + 1}/${images.length} at position (${imageData.x}, ${imageData.y})`);
+                                    ctx.drawImage(
+                                        img,
+                                        imageData.x * imageData.width * scale,
+                                        imageData.y * imageData.height * scale,
+                                        imageData.width * scale,
+                                        imageData.height * scale
+                                    );
+                                    resolve();
+                                } catch (drawError) {
+                                    console.error(`Error drawing image ${index + 1}:`, drawError);
+                                    reject(drawError);
+                                }
+                            };
+                            
+                            img.onerror = (error) => {
+                                console.error(`Error loading image ${index + 1}:`, error);
+                                reject(new Error(`Failed to load image ${index + 1}`));
+                            };
+                            
+                            // Set timeout for image loading
+                            setTimeout(() => {
+                                reject(new Error(`Timeout loading image ${index + 1}`));
+                            }, 10000);
+                            
+                            img.src = imageData.dataUrl;
+                        });
+                    });
+
+                    // Wait for all images to load and draw
+                    await Promise.all(imagePromises);
+                    console.log('All images drawn successfully');
 
                     // Convert canvas to data URL
                     const combinedImageDataUrl = canvas.toDataURL('image/png', options.quality);
@@ -238,7 +313,7 @@ class ScreenshotCapture {
                 } catch (error) {
                     console.error('Error in processImagesForPDF:', error);
                     console.error('Error stack:', error.stack);
-                    return null;
+                    return { error: error.message, stack: error.stack };
                 }
             },
             args: [images, options]
@@ -247,11 +322,23 @@ class ScreenshotCapture {
         console.log('Result from content script:', result);
 
         if (!result[0] || !result[0].result) {
-            console.error('Content script returned null or undefined result');
-            throw new Error('Failed to process images for PDF');
+            console.error('Content script execution failed - no result returned');
+            throw new Error('Failed to process images for PDF - no result returned');
         }
 
-        const { combinedImageDataUrl, dimensions } = result[0].result;
+        const resultData = result[0].result;
+        
+        // Check if the result contains an error
+        if (resultData.error) {
+            console.error('Content script returned error:', resultData.error);
+            throw new Error(`Failed to process images for PDF: ${resultData.error}`);
+        }
+
+        if (!resultData.combinedImageDataUrl || !resultData.dimensions) {
+            throw new Error('Content script returned invalid result - missing image data or dimensions');
+        }
+
+        const { combinedImageDataUrl, dimensions } = resultData;
 
         // For now, save as PNG instead of PDF to avoid import issues
         const filename = `screenshot_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
@@ -318,51 +405,133 @@ class ScreenshotCapture {
         
         const result = await chrome.scripting.executeScript({
             target: { tabId: tab.id },
-            function: (images, options) => {
+            function: async (images, options) => {
                 try {
+                    console.log('Starting image combination with', images.length, 'images');
+                    
+                    // Validate inputs
+                    if (!images || images.length === 0) {
+                        throw new Error('No images provided for combination');
+                    }
+
+                    // Check for valid image data
+                    for (let i = 0; i < images.length; i++) {
+                        if (!images[i].dataUrl || !images[i].dataUrl.startsWith('data:image/')) {
+                            throw new Error(`Invalid image data at index ${i}`);
+                        }
+                    }
+
                     // Create canvas to combine images
                     const canvas = document.createElement('canvas');
                     const ctx = canvas.getContext('2d');
+
+                    if (!ctx) {
+                        throw new Error('Failed to get canvas 2D context');
+                    }
 
                     const maxX = Math.max(...images.map(img => img.x));
                     const maxY = Math.max(...images.map(img => img.y));
                     const totalWidth = (maxX + 1) * images[0].width;
                     const totalHeight = (maxY + 1) * images[0].height;
 
-                    canvas.width = totalWidth;
-                    canvas.height = totalHeight;
+                    console.log('Canvas dimensions:', { totalWidth, totalHeight, maxX, maxY });
 
-                    // Draw images on canvas synchronously since they're already data URLs
-                    for (const image of images) {
-                        const img = new Image();
-                        img.src = image.dataUrl;
-                        // Since these are data URLs from chrome.tabs.captureVisibleTab, they should load immediately
-                        ctx.drawImage(
-                            img,
-                            image.x * image.width,
-                            image.y * image.height,
-                            image.width,
-                            image.height
-                        );
+                    // Check canvas size limits (most browsers support up to 32,767 pixels)
+                    const MAX_CANVAS_SIZE = 32767;
+                    let scale = 1;
+                    
+                    if (totalWidth > MAX_CANVAS_SIZE || totalHeight > MAX_CANVAS_SIZE) {
+                        console.warn(`Canvas size too large: ${totalWidth}x${totalHeight}. Attempting to scale down...`);
+                        
+                        // Calculate scale factor to fit within limits
+                        const scaleX = MAX_CANVAS_SIZE / totalWidth;
+                        const scaleY = MAX_CANVAS_SIZE / totalHeight;
+                        scale = Math.min(scaleX, scaleY, 1); // Don't scale up
+                        
+                        if (scale < 0.1) {
+                            throw new Error(`Page too large to process. Canvas size: ${totalWidth}x${totalHeight}. Maximum supported: ${MAX_CANVAS_SIZE}x${MAX_CANVAS_SIZE}. Consider using a smaller viewport or capturing in sections.`);
+                        }
+                        
+                        console.log(`Scaling down by factor ${scale.toFixed(3)}`);
                     }
 
+                    canvas.width = Math.floor(totalWidth * scale);
+                    canvas.height = Math.floor(totalHeight * scale);
+
+                    // Load and draw images asynchronously
+                    const imagePromises = images.map((imageData, index) => {
+                        return new Promise((resolve, reject) => {
+                            const img = new Image();
+                            
+                            img.onload = () => {
+                                try {
+                                    console.log(`Drawing image ${index + 1}/${images.length} at position (${imageData.x}, ${imageData.y})`);
+                                    ctx.drawImage(
+                                        img,
+                                        imageData.x * imageData.width * scale,
+                                        imageData.y * imageData.height * scale,
+                                        imageData.width * scale,
+                                        imageData.height * scale
+                                    );
+                                    resolve();
+                                } catch (drawError) {
+                                    console.error(`Error drawing image ${index + 1}:`, drawError);
+                                    reject(drawError);
+                                }
+                            };
+                            
+                            img.onerror = (error) => {
+                                console.error(`Error loading image ${index + 1}:`, error);
+                                reject(new Error(`Failed to load image ${index + 1}`));
+                            };
+                            
+                            // Set timeout for image loading
+                            setTimeout(() => {
+                                reject(new Error(`Timeout loading image ${index + 1}`));
+                            }, 10000);
+                            
+                            img.src = imageData.dataUrl;
+                        });
+                    });
+
+                    // Wait for all images to load and draw
+                    await Promise.all(imagePromises);
+                    console.log('All images drawn successfully');
+
+                    // Convert canvas to data URL
                     const combinedImageDataUrl = canvas.toDataURL(`image/${options.format}`, options.quality);
                     const filename = `screenshot_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.${options.format}`;
+
+                    console.log('Successfully created combined image, data URL length:', combinedImageDataUrl.length);
 
                     return { combinedImageDataUrl, filename };
                 } catch (error) {
                     console.error('Error in combineImagesInContent:', error);
-                    return null;
+                    console.error('Error stack:', error.stack);
+                    return { error: error.message, stack: error.stack };
                 }
             },
             args: [images, options]
         });
 
+        console.log('Result from content script:', result);
+
         if (!result[0] || !result[0].result) {
-            throw new Error('Failed to combine images');
+            throw new Error('Content script execution failed - no result returned');
         }
 
-        const { combinedImageDataUrl, filename } = result[0].result;
+        const resultData = result[0].result;
+        
+        // Check if the result contains an error
+        if (resultData.error) {
+            throw new Error(`Failed to combine images: ${resultData.error}`);
+        }
+
+        if (!resultData.combinedImageDataUrl || !resultData.filename) {
+            throw new Error('Content script returned invalid result - missing image data or filename');
+        }
+
+        const { combinedImageDataUrl, filename } = resultData;
         
         await chrome.downloads.download({
             url: combinedImageDataUrl,
