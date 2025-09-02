@@ -39,12 +39,17 @@ class ScreenshotCapture {
     }
 
     async preparePage(tabId, options) {
-        // Inject content script to prepare the page
-        await chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            function: this.preparePageContent,
-            args: [options]
-        });
+        try {
+            // Inject content script to prepare the page
+            await chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                function: this.preparePageContent,
+                args: [options]
+            });
+        } catch (error) {
+            console.warn('Failed to prepare page, continuing without preparation:', error);
+            // Continue without page preparation if it fails
+        }
     }
 
     preparePageContent(options) {
@@ -55,30 +60,50 @@ class ScreenshotCapture {
 
     async captureFullPage(tabId, options) {
         // Get page dimensions
-        const pageInfo = await chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            function: () => {
-                return window.screenshotHelper ? window.screenshotHelper.getPageDimensions() : {
-                    scrollWidth: Math.max(
-                        document.documentElement.scrollWidth,
-                        document.body.scrollWidth
-                    ),
-                    scrollHeight: Math.max(
-                        document.documentElement.scrollHeight,
-                        document.body.scrollHeight
-                    ),
-                    viewportWidth: window.innerWidth,
-                    viewportHeight: window.innerHeight
-                };
-            }
-        });
+        let pageInfo;
+        try {
+            pageInfo = await chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                function: () => {
+                    return window.screenshotHelper ? window.screenshotHelper.getPageDimensions() : {
+                        scrollWidth: Math.max(
+                            document.documentElement.scrollWidth,
+                            document.body.scrollWidth,
+                            document.documentElement.offsetWidth,
+                            document.body.offsetWidth
+                        ),
+                        scrollHeight: Math.max(
+                            document.documentElement.scrollHeight,
+                            document.body.scrollHeight,
+                            document.documentElement.offsetHeight,
+                            document.body.offsetHeight
+                        ),
+                        viewportWidth: window.innerWidth,
+                        viewportHeight: window.innerHeight,
+                        devicePixelRatio: window.devicePixelRatio || 1
+                    };
+                }
+            });
+        } catch (error) {
+            console.error('Failed to get page dimensions:', error);
+            throw new Error('Unable to access page dimensions. Please ensure the page is fully loaded.');
+        }
+
+        if (!pageInfo || !pageInfo[0] || !pageInfo[0].result) {
+            throw new Error('Failed to retrieve page dimensions');
+        }
 
         const { scrollWidth, scrollHeight, viewportWidth, viewportHeight } = pageInfo[0].result;
         
-        // Calculate number of segments needed
-        const segmentsX = Math.ceil(scrollWidth / viewportWidth);
-        const segmentsY = Math.ceil(scrollHeight / viewportHeight);
+        // Calculate number of segments needed with proper boundary handling
+        // Use floor to avoid creating extra segments that would cause overlaps
+        const segmentsX = Math.max(1, Math.floor(scrollWidth / viewportWidth) + (scrollWidth % viewportWidth > 0 ? 1 : 0));
+        const segmentsY = Math.max(1, Math.floor(scrollHeight / viewportHeight) + (scrollHeight % viewportHeight > 0 ? 1 : 0));
         const totalSegments = segmentsX * segmentsY;
+        
+        console.log(`Page dimensions: ${scrollWidth}x${scrollHeight}, Viewport: ${viewportWidth}x${viewportHeight}`);
+        console.log(`Segments needed: ${segmentsX}x${segmentsY} = ${totalSegments} total`);
+        console.log(`Remainder: X=${scrollWidth % viewportWidth}, Y=${scrollHeight % viewportHeight}`);
 
         const images = [];
         let segmentIndex = 0;
@@ -101,22 +126,51 @@ class ScreenshotCapture {
         // Capture each segment
         for (let y = 0; y < segmentsY; y++) {
             for (let x = 0; x < segmentsX; x++) {
-                // Scroll to position
-                await chrome.scripting.executeScript({
-                    target: { tabId: tabId },
-                    function: (x, y, viewportWidth, viewportHeight) => {
-                        window.scrollTo(
-                            x * viewportWidth,
-                            y * viewportHeight
-                        );
-                    },
-                    args: [x, y, viewportWidth, viewportHeight]
-                });
+                // Calculate precise scroll position to avoid overlaps
+                const scrollX = Math.min(x * viewportWidth, Math.max(0, scrollWidth - viewportWidth));
+                const scrollY = Math.min(y * viewportHeight, Math.max(0, scrollHeight - viewportHeight));
+                
+                // Calculate actual segment dimensions (last segments might be smaller)
+                const actualWidth = Math.min(viewportWidth, scrollWidth - scrollX);
+                const actualHeight = Math.min(viewportHeight, scrollHeight - scrollY);
+                
+                console.log(`Capturing segment (${x}, ${y}) at scroll position (${scrollX}, ${scrollY}) with dimensions ${actualWidth}x${actualHeight}`);
+                
+                // Scroll to position with better synchronization
+                try {
+                    await chrome.scripting.executeScript({
+                        target: { tabId: tabId },
+                        function: (scrollX, scrollY) => {
+                            return new Promise((resolve) => {
+                                window.scrollTo(scrollX, scrollY);
+                                
+                                // Wait for scroll to actually complete
+                                const checkScroll = () => {
+                                    if (Math.abs(window.scrollX - scrollX) < 5 && Math.abs(window.scrollY - scrollY) < 5) {
+                                        resolve();
+                                    } else {
+                                        setTimeout(checkScroll, 50);
+                                    }
+                                };
+                                
+                                // Start checking after a short delay
+                                setTimeout(checkScroll, 100);
+                            });
+                        },
+                        args: [scrollX, scrollY]
+                    });
+                } catch (error) {
+                    console.warn(`Failed to scroll to position (${scrollX}, ${scrollY}):`, error);
+                    // Continue with capture even if scroll fails
+                }
 
-                // Wait for scroll to complete and add extra delay for rate limiting
-                await new Promise(resolve => setTimeout(resolve, 200));
+                // Additional wait to ensure page is stable
+                await new Promise(resolve => setTimeout(resolve, 500));
 
                 try {
+                    // Add a small delay to ensure page is fully stable
+                    await new Promise(resolve => setTimeout(resolve, 200));
+                    
                     // Capture screenshot with retry logic
                     const screenshot = await this.captureScreenshotWithRetry(options);
 
@@ -125,12 +179,23 @@ class ScreenshotCapture {
                         throw new Error(`Invalid screenshot data received for segment (${x}, ${y})`);
                     }
 
+                    // Check for duplicate segments
+                    const existingSegment = images.find(img => img.x === x && img.y === y);
+                    if (existingSegment) {
+                        console.warn(`Duplicate segment detected at (${x}, ${y}), skipping...`);
+                        continue;
+                    }
+                    
+                    // Add timestamp to help identify any remaining issues
+                    const timestamp = Date.now();
+
                     images.push({
                         dataUrl: screenshot,
                         x: x,
                         y: y,
-                        width: viewportWidth,
-                        height: viewportHeight
+                        width: actualWidth,
+                        height: actualHeight,
+                        timestamp: timestamp
                     });
 
                     segmentIndex++;
@@ -170,6 +235,18 @@ class ScreenshotCapture {
             }
         }
 
+        // Final validation
+        const expectedSegments = segmentsX * segmentsY;
+        if (images.length !== expectedSegments) {
+            console.warn(`Expected ${expectedSegments} segments but captured ${images.length}. This might indicate some segments were skipped.`);
+        }
+        
+        // Sort images by position for consistent processing
+        images.sort((a, b) => {
+            if (a.y !== b.y) return a.y - b.y;
+            return a.x - b.x;
+        });
+        
         console.log(`Successfully captured ${images.length} image segments`);
         return images;
     }
@@ -394,11 +471,12 @@ class ScreenshotCapture {
             const result = await chrome.scripting.executeScript({
                 target: { tabId: tab.id },
                 function: (imageDataUrl, options) => {
-                    // Create HTML content for PDF
-                    const pageSize = options.pdfPageSize || 'a4';
-                    const orientation = options.pdfOrientation || 'portrait';
-                    
-                    const htmlContent = `<!DOCTYPE html>
+                    try {
+                        // Create HTML content for PDF
+                        const pageSize = options.pdfPageSize || 'a4';
+                        const orientation = options.pdfOrientation || 'portrait';
+                        
+                        const htmlContent = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -440,20 +518,24 @@ class ScreenshotCapture {
     <img src="${imageDataUrl}" alt="Screenshot" />
 </body>
 </html>`;
-                    
-                    // Create blob and URL in content script context
-                    const blob = new Blob([htmlContent], { type: 'text/html' });
-                    const blobUrl = URL.createObjectURL(blob);
-                    
-                    // Open new tab with the blob URL
-                    window.open(blobUrl, '_blank');
-                    
-                    // Clean up after a delay
-                    setTimeout(() => {
-                        URL.revokeObjectURL(blobUrl);
-                    }, 2000);
-                    
-                    return { success: true };
+                        
+                        // Create blob and URL in content script context
+                        const blob = new Blob([htmlContent], { type: 'text/html' });
+                        const blobUrl = URL.createObjectURL(blob);
+                        
+                        // Open new tab with the blob URL
+                        window.open(blobUrl, '_blank');
+                        
+                        // Clean up after a delay
+                        setTimeout(() => {
+                            URL.revokeObjectURL(blobUrl);
+                        }, 2000);
+                        
+                        return { success: true };
+                    } catch (error) {
+                        console.error('Error in PDF generation script:', error);
+                        return { success: false, error: error.message };
+                    }
                 },
                 args: [imageDataUrl, options]
             });
@@ -669,18 +751,30 @@ class ScreenshotCapture {
     }
 
     updateProgress(progress) {
-        chrome.runtime.sendMessage({
-            action: 'updateProgress',
-            progress: progress
-        });
+        try {
+            chrome.runtime.sendMessage({
+                action: 'updateProgress',
+                progress: progress
+            }).catch(error => {
+                console.warn('Failed to send progress update:', error);
+            });
+        } catch (error) {
+            console.warn('Failed to send progress update:', error);
+        }
     }
 
     updateStatus(message, type) {
-        chrome.runtime.sendMessage({
-            action: 'updateStatus',
-            message: message,
-            type: type
-        });
+        try {
+            chrome.runtime.sendMessage({
+                action: 'updateStatus',
+                message: message,
+                type: type
+            }).catch(error => {
+                console.warn('Failed to send status update:', error);
+            });
+        } catch (error) {
+            console.warn('Failed to send status update:', error);
+        }
     }
 }
 
@@ -695,11 +789,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.options,
             message.fullPage
         ).then(result => {
-            sendResponse(result);
+            try {
+                sendResponse(result);
+            } catch (error) {
+                console.warn('Failed to send response:', error);
+            }
         }).catch(error => {
-            sendResponse({ success: false, error: error.message });
+            try {
+                sendResponse({ success: false, error: error.message });
+            } catch (responseError) {
+                console.warn('Failed to send error response:', responseError);
+            }
         });
         
         return true; // Keep message channel open for async response
     }
+    
+    // Handle other messages if needed
+    return false;
 });
